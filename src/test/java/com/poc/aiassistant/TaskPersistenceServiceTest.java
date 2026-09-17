@@ -24,6 +24,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.jdbc.core.JdbcOperations;
 import org.springframework.jdbc.core.PreparedStatementSetter;
 import org.springframework.jdbc.core.ResultSetExtractor;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import com.poc.aiassistant.entity.Task;
 import com.poc.aiassistant.entity.TaskDuplicateMatch;
@@ -69,6 +70,30 @@ class TaskPersistenceServiceTest {
         return repo;
     }
 
+    private static Task stubJpaPersistenceState(Task task) {
+        if (task.getId() == null) {
+            task.setId(UUID.randomUUID());
+        }
+
+        if (task.getCreatedAt() == null) {
+            ReflectionTestUtils.setField(
+                    task,
+                    "createdAt",
+                    java.time.OffsetDateTime.now()
+            );
+        }
+
+        if (task.getUpdatedAt() == null) {
+            ReflectionTestUtils.setField(
+                    task,
+                    "updatedAt",
+                    java.time.OffsetDateTime.now()
+            );
+        }
+
+        return task;
+    }
+
     private static TaskPersistenceService serviceWithSemanticDisabled(
             TaskRepository tasks, TaskDuplicateMatchRepository audit, JdbcOperations jdbc
     ) {
@@ -76,7 +101,8 @@ class TaskPersistenceServiceTest {
                 tasks, audit,
                 mock(TaskSemanticVerificationService.class),
                 mock(EmbeddingSimilarityService.class),
-                jdbc, false, 3, THRESHOLD
+                jdbc, false, 3, THRESHOLD,
+                mock(com.poc.aiassistant.realtime.RealtimeEventService.class)
         );
     }
 
@@ -86,7 +112,8 @@ class TaskPersistenceServiceTest {
             JdbcOperations jdbc
     ) {
         return new TaskPersistenceService(
-                tasks, audit, verifier, similarity, jdbc, true, 3, THRESHOLD
+                tasks, audit, verifier, similarity, jdbc, true, 3, THRESHOLD,
+                mock(com.poc.aiassistant.realtime.RealtimeEventService.class)
         );
     }
 
@@ -121,7 +148,7 @@ class TaskPersistenceServiceTest {
 
         when(tasks.findActiveExactMatches("alice@company.com", "mailboxA", "fp-1"))
                 .thenReturn(List.of());
-        when(tasks.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(tasks.save(any(Task.class))).thenAnswer(inv -> stubJpaPersistenceState(inv.getArgument(0)));
 
         TaskPersistenceService service = serviceWithSemanticDisabled(tasks, audit, jdbc);
 
@@ -181,7 +208,7 @@ class TaskPersistenceServiceTest {
         TaskDuplicateMatchRepository audit = mockAuditRepo();
         JdbcOperations jdbc = mock(JdbcOperations.class);
 
-        when(tasks.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(tasks.save(any(Task.class))).thenAnswer(inv -> stubJpaPersistenceState(inv.getArgument(0)));
 
         TaskPersistenceService service = serviceWithSemanticDisabled(tasks, audit, jdbc);
 
@@ -256,7 +283,7 @@ class TaskPersistenceServiceTest {
         stubLockNoOp(jdbc);
 
         when(tasks.findActiveExactMatches(any(), any(), any())).thenReturn(List.of());
-        when(tasks.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(tasks.save(any(Task.class))).thenAnswer(inv -> stubJpaPersistenceState(inv.getArgument(0)));
 
         TaskPersistenceService service = serviceWithSemanticDisabled(tasks, audit, jdbc);
 
@@ -276,7 +303,7 @@ class TaskPersistenceServiceTest {
         stubLockNoOp(jdbc);
 
         when(tasks.findActiveExactMatches(any(), any(), any())).thenReturn(List.of());
-        when(tasks.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(tasks.save(any(Task.class))).thenAnswer(inv -> stubJpaPersistenceState(inv.getArgument(0)));
 
         TaskPersistenceService service = serviceWithSemanticEnabled(tasks, audit, verifier, similarity, jdbc);
 
@@ -304,7 +331,7 @@ class TaskPersistenceServiceTest {
         when(tasks.findActiveExactMatches(any(), any(), any())).thenReturn(List.of());
         when(tasks.findActiveCandidatesForSemanticMatch(any(), any(), any(), any(Pageable.class)))
                 .thenReturn(List.of());
-        when(tasks.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(tasks.save(any(Task.class))).thenAnswer(inv -> stubJpaPersistenceState(inv.getArgument(0)));
 
         TaskPersistenceService service = serviceWithSemanticEnabled(tasks, audit, verifier, similarity, jdbc);
 
@@ -334,7 +361,7 @@ class TaskPersistenceServiceTest {
                 .thenReturn(List.of(candidate));
         when(similarity.scoreTasks(any(), any(), any(), any()))
                 .thenReturn(0.01); // well below THRESHOLD
-        when(tasks.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(tasks.save(any(Task.class))).thenAnswer(inv -> stubJpaPersistenceState(inv.getArgument(0)));
 
         TaskPersistenceService service = serviceWithSemanticEnabled(tasks, audit, verifier, similarity, jdbc);
 
@@ -401,7 +428,7 @@ class TaskPersistenceServiceTest {
                 .thenThrow(new IllegalStateException("embedding response malformed"));
         when(verifier.verify(any(Task.class), eq(candidate), anyDouble(), anyDouble()))
                 .thenReturn(new VerificationResult(Verdict.DIFFERENT, "unrelated"));
-        when(tasks.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(tasks.save(any(Task.class))).thenAnswer(inv -> stubJpaPersistenceState(inv.getArgument(0)));
 
         TaskPersistenceService service = serviceWithSemanticEnabled(tasks, audit, verifier, similarity, jdbc);
 
@@ -502,7 +529,7 @@ class TaskPersistenceServiceTest {
         when(similarity.scoreTasks(any(), any(), any(), any())).thenReturn(0.6);
         when(verifier.verify(any(Task.class), any(Task.class), anyDouble(), anyDouble()))
                 .thenReturn(new VerificationResult(Verdict.DIFFERENT, "Different invoice numbers"));
-        when(tasks.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(tasks.save(any(Task.class))).thenAnswer(inv -> stubJpaPersistenceState(inv.getArgument(0)));
 
         TaskPersistenceService service = serviceWithSemanticEnabled(tasks, audit, verifier, similarity, jdbc);
 

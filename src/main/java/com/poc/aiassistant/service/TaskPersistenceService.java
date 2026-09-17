@@ -19,6 +19,8 @@ import com.poc.aiassistant.entity.TaskDuplicateMatchType;
 import com.poc.aiassistant.repository.TaskDuplicateMatchRepository;
 import com.poc.aiassistant.repository.TaskRepository;
 import com.poc.aiassistant.util.SenderNormalizer;
+import com.poc.aiassistant.realtime.RealtimeEventService;
+import com.poc.aiassistant.realtime.RealtimeEventType;
 
 /**
  * Owns the sender-scoped concurrency guard and the atomic
@@ -69,6 +71,7 @@ public class TaskPersistenceService {
     private final boolean semanticDetectionEnabled;
     private final int maxSemanticCandidates;
     private final double similarityThreshold;
+    private final RealtimeEventService realtimeEventService;
 
     private static final org.slf4j.Logger log =
             org.slf4j.LoggerFactory.getLogger(TaskPersistenceService.class);
@@ -81,7 +84,8 @@ public class TaskPersistenceService {
             JdbcOperations jdbcOperations,
             @Value("${semantic-duplicate-detection.enabled:false}") boolean semanticDetectionEnabled,
             @Value("${semantic-duplicate-detection.max-candidates:3}") int maxSemanticCandidates,
-            @Value("${semantic-duplicate-detection.embedding-similarity-threshold:0.75}") double similarityThreshold
+            @Value("${semantic-duplicate-detection.embedding-similarity-threshold:0.75}") double similarityThreshold,
+            RealtimeEventService realtimeEventService
     ) {
         this.taskRepository = taskRepository;
         this.taskDuplicateMatchRepository = taskDuplicateMatchRepository;
@@ -91,6 +95,7 @@ public class TaskPersistenceService {
         this.semanticDetectionEnabled = semanticDetectionEnabled;
         this.maxSemanticCandidates = maxSemanticCandidates;
         this.similarityThreshold = similarityThreshold;
+        this.realtimeEventService = realtimeEventService;
     }
 
     public record PersistResult(Task task, boolean created) {
@@ -172,6 +177,17 @@ public class TaskPersistenceService {
 
         try {
             Task saved = taskRepository.save(builtDraft != null ? builtDraft : newTaskSupplier.get());
+
+            realtimeEventService.enqueue(
+                    RealtimeEventType.TASK_CREATED,
+                    "TASK",
+                    saved.getId().toString(),
+                    java.util.Map.of(
+                            "taskId", saved.getId().toString(),
+                            "updatedAt", saved.getUpdatedAt().toString()
+                    )
+            );
+
             return new PersistResult(saved, true);
         } catch (DataIntegrityViolationException raceLostAtDatabase) {
             // Defense-in-depth only: with the advisory lock held above,

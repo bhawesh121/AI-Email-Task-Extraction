@@ -79,7 +79,8 @@ class DeferredProcessingTest {
                 60,
                 MAX_DEFER_ATTEMPTS,
                 DEFERRED_RETRY_INTERVAL_MINUTES,
-                MAX_DEFER_MINUTES
+                MAX_DEFER_MINUTES,
+                mock(com.poc.aiassistant.realtime.RealtimeEventService.class)
         );
     }
 

@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -14,9 +15,11 @@ import static org.mockito.Mockito.when;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import com.poc.aiassistant.config.SlaProperties;
 import com.poc.aiassistant.dto.EmailDto;
@@ -56,7 +59,8 @@ class SlaServiceTest {
                         emailSlaRepository,
                         emailIntelligenceRepository,
                         slaEligibilityService,
-                        calculator
+                        calculator,
+                        mock(com.poc.aiassistant.realtime.RealtimeEventService.class)
                 );
 
         when(
@@ -68,6 +72,49 @@ class SlaServiceTest {
         ).thenReturn(
                 Optional.empty()
         );
+
+        // Mockito does not run JPA lifecycle callbacks or assign @GeneratedValue
+        // identifiers. The production code needs both values after save(), so
+        // make the mock repository behave like persisted JPA entities.
+        when(emailSlaRepository.save(any(EmailSla.class)))
+                .thenAnswer(invocation -> {
+                    EmailSla sla = invocation.getArgument(0);
+                    stubJpaPersistenceState(sla);
+                    return sla;
+                });
+
+        when(emailSlaRepository.saveAll(any()))
+                .thenAnswer(invocation -> {
+                    List<EmailSla> slas = invocation.getArgument(0);
+                    slas.forEach(SlaServiceTest::stubJpaPersistenceState);
+                    return slas;
+                });
+    }
+
+    private static void stubJpaPersistenceState(EmailSla sla) {
+        if (sla.getId() == null) {
+            ReflectionTestUtils.setField(
+                    sla,
+                    "id",
+                    UUID.randomUUID()
+            );
+        }
+
+        if (sla.getCreatedAt() == null) {
+            ReflectionTestUtils.setField(
+                    sla,
+                    "createdAt",
+                    OffsetDateTime.now()
+            );
+        }
+
+        if (sla.getUpdatedAt() == null) {
+            ReflectionTestUtils.setField(
+                    sla,
+                    "updatedAt",
+                    OffsetDateTime.now()
+            );
+        }
     }
 
     private EmailDto email(
@@ -1005,8 +1052,53 @@ class SlaServiceTest {
 
         setUp();
 
+        OffsetDateTime receivedAt =
+                OffsetDateTime.parse(
+                        "2026-08-28T10:00:00Z"
+                );
+
+        OffsetDateTime slaStartAt =
+                OffsetDateTime.parse(
+                        "2026-08-28T10:00:00Z"
+                );
+
+        OffsetDateTime slaDeadlineAt =
+                OffsetDateTime.parse(
+                        "2026-08-28T12:00:00Z"
+                );
+
         EmailSla overdue =
-                mock(EmailSla.class);
+                spy(
+                        new EmailSla(
+                        "mailbox-2",
+                        "message-breach-1",
+                        "conversation-breach-1",
+                        "customer@example.com",
+                        "example.com",
+                        "Overdue email",
+                        receivedAt,
+                        slaStartAt,
+                        slaDeadlineAt
+                )
+        );
+
+        ReflectionTestUtils.setField(
+                overdue,
+                "id",
+                UUID.randomUUID()
+        );
+
+        ReflectionTestUtils.setField(
+                overdue,
+                "createdAt",
+                receivedAt
+        );
+
+        ReflectionTestUtils.setField(
+                overdue,
+                "updatedAt",
+                receivedAt
+        );
 
         when(
                 emailSlaRepository

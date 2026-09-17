@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.test.util.ReflectionTestUtils;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import org.junit.jupiter.api.Test;
 import static org.mockito.ArgumentMatchers.any;
@@ -38,7 +40,11 @@ class TaskLifecycleTest {
         EmployeeRepository employees = mock(EmployeeRepository.class);
 
         TaskService service =
-                new TaskService(tasks, employees);
+                new TaskService(
+                        tasks,
+                        employees,
+                        mock(com.poc.aiassistant.realtime.RealtimeEventService.class)
+                );
 
         UUID id = UUID.randomUUID();
 
@@ -49,7 +55,31 @@ class TaskLifecycleTest {
                 .thenReturn(Optional.of(task));
 
         when(tasks.save(any(Task.class)))
-                .thenAnswer(inv -> inv.getArgument(0));
+                .thenAnswer(inv -> {
+                    Task saved = inv.getArgument(0);
+
+                    if (saved.getId() == null) {
+                        saved.setId(id);
+                    }
+
+                    if (saved.getCreatedAt() == null) {
+                        ReflectionTestUtils.setField(
+                                saved,
+                                "createdAt",
+                                java.time.OffsetDateTime.now()
+                        );
+                    }
+
+                    if (saved.getUpdatedAt() == null) {
+                        ReflectionTestUtils.setField(
+                                saved,
+                                "updatedAt",
+                                java.time.OffsetDateTime.now()
+                        );
+                    }
+
+                    return saved;
+                });
 
         TaskDto result =
                 service.updateStatus(
@@ -75,7 +105,11 @@ class TaskLifecycleTest {
         EmployeeRepository employees = mock(EmployeeRepository.class);
 
         TaskService service =
-                new TaskService(tasks, employees);
+                new TaskService(
+                        tasks,
+                        employees,
+                        mock(com.poc.aiassistant.realtime.RealtimeEventService.class)
+                );
 
         when(
                 tasks.findByDueDateBeforeAndStatusNotIn(

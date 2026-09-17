@@ -302,3 +302,14 @@ sla:
   working-hours-start: "09:00"
   working-hours-end: "18:00"
 
+
+realtime:
+  outbox:
+    publisher-delay-ms: 1000
+    heartbeat-delay-ms: 20000
+    cleanup-delay-ms: 3600000
+    batch-size: 100
+    retry-base-seconds: 2
+    retry-max-seconds: 60
+    stale-claim-minutes: 2
+    retention-days: 7

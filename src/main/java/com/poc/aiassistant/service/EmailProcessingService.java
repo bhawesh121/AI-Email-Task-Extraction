@@ -19,6 +19,8 @@ import com.poc.aiassistant.dto.TaskDto;
 import com.poc.aiassistant.entity.EmailProcessing;
 import com.poc.aiassistant.entity.EmailProcessingStatus;
 import com.poc.aiassistant.repository.EmailProcessingRepository;
+import com.poc.aiassistant.realtime.RealtimeEventService;
+import com.poc.aiassistant.realtime.RealtimeEventType;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
@@ -39,6 +41,7 @@ public class EmailProcessingService {
     private final int maxDeferAttempts;
     private final int deferredRetryIntervalMinutes;
     private final int maxDeferMinutes;
+    private final RealtimeEventService realtimeEventService;
 
     public EmailProcessingService(
             EmailProcessingRepository emailProcessingRepository,
@@ -51,7 +54,8 @@ public class EmailProcessingService {
             @Value("${email.processing.max-backoff-minutes:60}") int maxBackoffMinutes,
             @Value("${email.processing.max-defer-attempts:100}") int maxDeferAttempts,
             @Value("${email.processing.deferred-retry-interval-minutes:20}") int deferredRetryIntervalMinutes,
-            @Value("${email.processing.max-defer-minutes:2880}") int maxDeferMinutes
+            @Value("${email.processing.max-defer-minutes:2880}") int maxDeferMinutes,
+            RealtimeEventService realtimeEventService
     ) {
         this.emailProcessingRepository = emailProcessingRepository;
         this.emailTaskService = emailTaskService;
@@ -69,6 +73,7 @@ public class EmailProcessingService {
         // that eventually moves a perpetually-UNAVAILABLE email to
         // DEAD_LETTER instead of deferring it forever.
         this.maxDeferMinutes = Math.max(1, maxDeferMinutes);
+        this.realtimeEventService = realtimeEventService;
     }
 
     /** Durable registration only. No Graph body fetch and no LLM call. */
@@ -229,6 +234,17 @@ public class EmailProcessingService {
         processing.setClaimedBy(null);
         processing.setErrorMessage(null);
         emailProcessingRepository.save(processing);
+
+        realtimeEventService.enqueue(
+                RealtimeEventType.EMAIL_PROCESSED,
+                "EMAIL_PROCESSING",
+                String.valueOf(processingId),
+                java.util.Map.of(
+                        "processingId", String.valueOf(processingId),
+                        "mailboxUserId", email.mailbox(),
+                        "messageId", email.id()
+                )
+        );
 
         return tasks == null ? List.of() : tasks;
     }

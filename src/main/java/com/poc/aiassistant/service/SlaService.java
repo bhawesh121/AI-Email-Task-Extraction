@@ -26,6 +26,8 @@ import com.poc.aiassistant.entity.EmailSla;
 import com.poc.aiassistant.entity.EmailSlaStatus;
 import com.poc.aiassistant.repository.EmailIntelligenceRepository;
 import com.poc.aiassistant.repository.EmailSlaRepository;
+import com.poc.aiassistant.realtime.RealtimeEventService;
+import com.poc.aiassistant.realtime.RealtimeEventType;
 
 /**
  * Email-level Responsiveness/SLA tracking.
@@ -44,17 +46,20 @@ public class SlaService {
     private final EmailIntelligenceRepository emailIntelligenceRepository;
     private final SlaEligibilityService slaEligibilityService;
     private final BusinessHoursSlaCalculator businessHoursSlaCalculator;
+    private final RealtimeEventService realtimeEventService;
 
     public SlaService(
             EmailSlaRepository emailSlaRepository,
             EmailIntelligenceRepository emailIntelligenceRepository,
             SlaEligibilityService slaEligibilityService,
-            BusinessHoursSlaCalculator businessHoursSlaCalculator
+            BusinessHoursSlaCalculator businessHoursSlaCalculator,
+            RealtimeEventService realtimeEventService
     ) {
         this.emailSlaRepository = emailSlaRepository;
         this.emailIntelligenceRepository = emailIntelligenceRepository;
         this.slaEligibilityService = slaEligibilityService;
         this.businessHoursSlaCalculator = businessHoursSlaCalculator;
+        this.realtimeEventService = realtimeEventService;
     }
 
     /**
@@ -161,6 +166,17 @@ public class SlaService {
                 );
 
         emailSlaRepository.save(sla);
+
+        realtimeEventService.enqueue(
+                RealtimeEventType.SLA_CREATED,
+                "SLA",
+                sla.getId().toString(),
+                java.util.Map.of(
+                        "slaId", sla.getId().toString(),
+                        "status", sla.getStatus().name(),
+                        "updatedAt", sla.getUpdatedAt().toString()
+                )
+        );
 
         log.info(
                 "SLA created: mailbox={}, messageId={}, "
@@ -394,6 +410,19 @@ public class SlaService {
                     candidate
             );
 
+            realtimeEventService.enqueue(
+                    candidate.getStatus() == EmailSlaStatus.BREACHED
+                            ? RealtimeEventType.SLA_BREACHED
+                            : RealtimeEventType.SLA_COMPLETED,
+                    "SLA",
+                    candidate.getId().toString(),
+                    java.util.Map.of(
+                            "slaId", candidate.getId().toString(),
+                            "status", candidate.getStatus().name(),
+                            "updatedAt", candidate.getUpdatedAt().toString()
+                    )
+            );
+
             log.info(
                     "SLA reply matched: "
                             + "mailboxUserId={}, "
@@ -579,6 +608,19 @@ public class SlaService {
             emailSlaRepository.saveAll(
                     overdue
             );
+
+            for (EmailSla sla : overdue) {
+                realtimeEventService.enqueue(
+                        RealtimeEventType.SLA_BREACHED,
+                        "SLA",
+                        sla.getId().toString(),
+                        java.util.Map.of(
+                                "slaId", sla.getId().toString(),
+                                "status", sla.getStatus().name(),
+                                "updatedAt", sla.getUpdatedAt().toString()
+                        )
+                );
+            }
 
             log.info(
                     "SLA breach sweep marked {} email(s) BREACHED",

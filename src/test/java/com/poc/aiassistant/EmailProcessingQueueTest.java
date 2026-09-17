@@ -61,7 +61,8 @@ class EmailProcessingQueueTest {
                 60,
                 100,
                 20,
-                2880
+                2880,
+                mock(com.poc.aiassistant.realtime.RealtimeEventService.class)
         );
     }
 

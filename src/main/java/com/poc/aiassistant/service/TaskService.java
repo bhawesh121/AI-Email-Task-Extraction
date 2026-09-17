@@ -37,6 +37,8 @@ import com.poc.aiassistant.entity.TaskStatus;
 import com.poc.aiassistant.repository.EmployeeRepository;
 import com.poc.aiassistant.repository.TaskRepository;
 import com.poc.aiassistant.util.SenderNormalizer;
+import com.poc.aiassistant.realtime.RealtimeEventService;
+import com.poc.aiassistant.realtime.RealtimeEventType;
 
 import jakarta.persistence.criteria.Expression;
 import jakarta.persistence.criteria.Predicate;
@@ -47,13 +49,16 @@ public class TaskService {
 
     private final TaskRepository taskRepository;
     private final EmployeeRepository employeeRepository;
+    private final RealtimeEventService realtimeEventService;
     
     public TaskService(
         TaskRepository taskRepository,
-        EmployeeRepository employeeRepository
+        EmployeeRepository employeeRepository,
+        RealtimeEventService realtimeEventService
     ) {
         this.taskRepository = taskRepository;
         this.employeeRepository = employeeRepository;
+        this.realtimeEventService = realtimeEventService;
     }
 
     private Specification<Task> buildTaskSpecification(
@@ -404,9 +409,20 @@ public class TaskService {
         );
     }
 
-    return toDto(
-            taskRepository.save(task)
+    Task saved = taskRepository.save(task);
+
+    realtimeEventService.enqueue(
+            RealtimeEventType.TASK_ASSIGNEE_CHANGED,
+            "TASK",
+            saved.getId().toString(),
+            java.util.Map.of(
+                    "taskId", saved.getId().toString(),
+                    "assigneeEmail", saved.getAssigneeEmail() == null ? "" : saved.getAssigneeEmail(),
+                    "updatedAt", saved.getUpdatedAt().toString()
+            )
     );
+
+    return toDto(saved);
 }
 
     public TaskDto updatePriority(
@@ -423,7 +439,20 @@ public class TaskService {
 
         task.setPriority(priority);
 
-        return toDto(taskRepository.save(task));
+        Task saved = taskRepository.save(task);
+
+        realtimeEventService.enqueue(
+                RealtimeEventType.TASK_PRIORITY_CHANGED,
+                "TASK",
+                saved.getId().toString(),
+                java.util.Map.of(
+                        "taskId", saved.getId().toString(),
+                        "priority", saved.getPriority().name(),
+                        "updatedAt", saved.getUpdatedAt().toString()
+                )
+        );
+
+        return toDto(saved);
     }
 
     public List<TaskDto> filterTasks(
@@ -800,7 +829,19 @@ public class TaskService {
         task.setSourceType(dto.sourceType());
         task.setAiReason(dto.aiReason());
 
-        return toDto(taskRepository.save(task));
+        Task saved = taskRepository.save(task);
+
+        realtimeEventService.enqueue(
+                RealtimeEventType.TASK_CREATED,
+                "TASK",
+                saved.getId().toString(),
+                java.util.Map.of(
+                        "taskId", saved.getId().toString(),
+                        "updatedAt", saved.getUpdatedAt().toString()
+                )
+        );
+
+        return toDto(saved);
     }
 
     public TaskDto updateStatus(
@@ -817,7 +858,20 @@ public class TaskService {
 
         task.setStatus(status);
 
-        return toDto(taskRepository.save(task));
+        Task saved = taskRepository.save(task);
+
+        realtimeEventService.enqueue(
+                RealtimeEventType.TASK_STATUS_CHANGED,
+                "TASK",
+                saved.getId().toString(),
+                java.util.Map.of(
+                        "taskId", saved.getId().toString(),
+                        "status", saved.getStatus().name(),
+                        "updatedAt", saved.getUpdatedAt().toString()
+                )
+        );
+
+        return toDto(saved);
     }
 
     public List<TaskDto> getByStatus(TaskStatus status) {

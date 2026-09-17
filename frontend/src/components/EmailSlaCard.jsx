@@ -10,6 +10,7 @@ import {
 } from "recharts";
 import { ClockIcon, FlagIcon } from "./Icons";
 import { api } from "../lib/api";
+import { useAppData } from "../lib/AppDataContext";
 
 // Replaces the former "Deduplication Summary" placeholder.
 //
@@ -36,6 +37,7 @@ export default function EmailSlaCard() {
   const [breached, setBreached] = useState([]);
   const [breachedLoading, setBreachedLoading] = useState(false);
   const [breachedError, setBreachedError] = useState(null);
+  const { realtimeEvent } = useAppData();
 
   const loadSlaData = useCallback(async (showMainLoader = false) => {
     if (showMainLoader) {
@@ -163,6 +165,27 @@ export default function EmailSlaCard() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const type = realtimeEvent?.type;
+
+    if (
+      type === "SLA_CREATED" ||
+      type === "SLA_COMPLETED" ||
+      type === "SLA_BREACHED" ||
+      type === "EMAIL_PROCESSED"
+    ) {
+      loadSlaData(false).catch(() => {});
+
+      if (showBreached && type !== "SLA_CREATED") {
+        loadBreachedEmails().catch(() => {});
+      }
+    }
+  }, [
+    realtimeEvent?.id,
+    loadSlaData,
+    loadBreachedEmails,
+  ]);
 
   // Keep the local breached list synchronized with the backend summary.
   //

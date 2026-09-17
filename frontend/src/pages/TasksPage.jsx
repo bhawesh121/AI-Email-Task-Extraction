@@ -27,6 +27,7 @@ export default function TasksPage() {
     updateTaskPriority,
     taskDashboard,
     loading: contextLoading,
+    realtimeEvent,
   } = useAppData();
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -178,7 +179,34 @@ export default function TasksPage() {
       active = false;
       controller.abort();
     };
-  }, [pageQuery, pageQueryKey, page, reloadVersion]);
+  }, [
+    pageQuery,
+    pageQueryKey,
+    page,
+    reloadVersion,
+    realtimeEvent?.id,
+  ]);
+
+  useEffect(() => {
+    const type = realtimeEvent?.type;
+    const entityId = realtimeEvent?.entityId;
+
+    const taskEvent =
+      type === "TASK_CREATED" ||
+      type === "TASK_STATUS_CHANGED" ||
+      type === "TASK_PRIORITY_CHANGED" ||
+      type === "TASK_ASSIGNEE_CHANGED" ||
+      type === "TASK_UPDATED";
+
+    if (!taskEvent || !openTask?.id || entityId !== openTask.id) {
+      return;
+    }
+
+    api
+      .getTask(openTask.id)
+      .then(setOpenTask)
+      .catch(() => {});
+  }, [realtimeEvent?.id, openTask?.id]);
 
   useEffect(() => {
     if (!toast) return;
