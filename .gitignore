@@ -1,0 +1,81 @@
+# =========================
+# Environment / Secrets
+# =========================
+.env
+.env.*
+!.env.example
+
+# Notes / local files
+notes.txt
+
+# =========================
+# Maven
+# =========================
+target/
+**/target/
+
+.mvn/wrapper/maven-wrapper.jar
+
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# =========================
+# STS / Eclipse
+# =========================
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings/
+.springBeans
+.sts4-cache
+
+# =========================
+# IntelliJ IDEA
+# =========================
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# =========================
+# NetBeans
+# =========================
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+# =========================
+# VS Code
+# =========================
+.vscode/
+
+# =========================
+# Node
+# =========================
+node_modules/
+**/node_modules/
+
+# =========================
+# Frontend build
+# =========================
+frontend/dist/
+**/dist/
+
+# =========================
+# Logs
+# =========================
+*.log
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+### Local Documentation / Notes ###
+commands.txt
+currentPOC.txt
+MERGE_NOTES.md

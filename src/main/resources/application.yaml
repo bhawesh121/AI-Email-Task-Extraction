@@ -1,0 +1,304 @@
+spring:
+  application:
+    name: aiassistant
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5434}/${DB_NAME:aiassistant}
+    username: ${DB_USERNAME:aiassistant}
+    password: ${DB_PASSWORD:aiassistant}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  security:
+    oauth2:
+      client:
+        registration:
+
+          # ==========================================
+          # Existing delegated login
+          # ==========================================
+          microsoft:
+            provider: microsoft
+            client-id: ${MICROSOFT_CLIENT_ID}
+            client-secret: ${MICROSOFT_CLIENT_SECRET}
+            client-authentication-method: client_secret_post
+            authorization-grant-type: authorization_code
+            # NOTE: this is a BACKEND-reachable URL (Microsoft redirects the
+            # browser here, and it must be routed by the reverse proxy to
+            # THIS application's own OAuth2 callback filter), not the
+            # frontend's URL. Deliberately a separate property from
+            # app.frontend-base-url even though the two currently resolve
+            # to the same domain/prefix behind nginx - conflating them was
+            # the root cause of the /login?error 404 (see nginx.conf).
+            redirect-uri: "${app.backend-base-url}/login/oauth2/code/{registrationId}"
+            scope:
+              - openid
+              - profile
+              - offline_access
+              - User.Read
+              - Mail.Read
+              - Files.ReadWrite
+
+          # ==========================================
+          # NEW: Application / app-only Graph access
+          # ==========================================
+          microsoft-admin:
+            provider: microsoft
+            client-id: ${MICROSOFT_CLIENT_ID}
+            client-secret: ${MICROSOFT_CLIENT_SECRET}
+            client-authentication-method: client_secret_post
+            authorization-grant-type: client_credentials
+            scope:
+              - https://graph.microsoft.com/.default
+
+        provider:
+          microsoft:
+            issuer-uri: https://login.microsoftonline.com/${MICROSOFT_TENANT_ID}/v2.0
+
+server:
+  port: ${SERVER_PORT:8080}
+  # Reverse proxy (nginx) sends X-Forwarded-Proto/Prefix/For - honor them
+  # so Spring resolves the correct externally-visible scheme/path (needed
+  # for correct secure-cookie detection and any URL building) instead of
+  # assuming plain http on the internal container port.
+  forward-headers-strategy: framework
+  servlet:
+    session:
+      timeout: 15m
+      cookie:
+        # Reverse proxy terminates TLS in production, so this must default
+        # to true there. Overridden to false only for local dev, which
+        # runs over plain http://localhost (see .env) - a Secure cookie is
+        # never sent by the browser over plain HTTP, so leaving this
+        # hardcoded to true would silently break local login.
+        secure: ${SESSION_COOKIE_SECURE:true}
+        http-only: true
+        same-site: lax
+
+app:
+  frontend-base-url: ${APP_FRONTEND_BASE_URL:http://localhost:5173}
+  # Externally-reachable base URL for THIS backend, as seen through the
+  # reverse proxy (e.g. https://auto.aiworkforcemanagement.ai/sla). Used
+  # only to build the OAuth2 redirect-uri above. Falls back to
+  # frontend-base-url so existing single-domain deployments keep working
+  # unchanged if APP_BACKEND_BASE_URL isn't set.
+  backend-base-url: ${APP_BACKEND_BASE_URL:${app.frontend-base-url}}
+
+microsoft:
+  graph:
+    base-url: https://graph.microsoft.com/v1.0
+  excel:
+    # Graph site ID of the OneDrive-personal site hosting
+    # AI-Email-Tasks.xlsx, e.g.:
+    # jakmerchandising-my.sharepoint.com,978c8e04-...,a47789ea-...
+    site-id: ${MICROSOFT_EXCEL_SITE_ID}
+
+organization:
+  domain: ${ORGANIZATION_DOMAIN:jakmerchandising.onmicrosoft.com}
+
+email:
+  processing:
+    # Queue worker cadence; discovery remains independently scheduled below.
+    interval-ms: 10000
+
+    # Short-retry budget for ordinary TRANSIENT failures (a single
+    # blip, one bad timeout). Unchanged from before this redesign.
+    max-attempts: 5
+    lease-duration-minutes: 15
+    max-backoff-minutes: 60
+
+    # Separate budget for UNAVAILABLE failures (the whole configured
+    # LLM model group — primary + every LiteLLM fallback — is
+    # currently unable to serve requests at all). Deliberately does
+    # NOT share attempt_count with the short-retry path above, so a
+    # multi-hour outage cannot get dead-lettered in minutes.
+    #
+    # max-defer-attempts is a generous ceiling mostly as a backstop;
+    # max-defer-minutes (a wall-clock horizon) is the setting that
+    # actually matters day to day. Neither value is derived from any
+    # specific provider's quota/reset behavior — they are plain,
+    # operator-configured policy, intentionally provider-agnostic.
+    max-defer-attempts: 100
+    # How long to wait before checking again when the provider gave
+    # no Retry-After/timing signal. When a signal IS present (e.g. an
+    # HTTP Retry-After header), that value is used instead.
+    deferred-retry-interval-minutes: 20
+    # 2880 minutes = 48 hours. Only once an email has been
+    # continuously deferred for longer than this does it move to
+    # DEAD_LETTER — this is the sole ceiling that prevents indefinite
+    # deferral, and it is a plain operational choice, not a provider
+    # reset time.
+    max-defer-minutes: 2880
+
+  sync:
+    fixed-delay: 60000
+    # Bound per-mailbox delta work so a very large mailbox cannot monopolize discovery.
+    max-delta-pages-per-user-per-run: 5
+
+  # Extraction drains the durable queue independently of Graph discovery.
+  extraction:
+    fixed-delay: 10000
+
+  queue:
+    # Maximum rows claimed by one extraction cycle; actual claims are further
+    # capped by the remaining minute/day LLM budget.
+    batch-size: 20
+    # Stale-lease recovery and queue observability are intentionally separate
+    # from extraction so maintenance never depends on worker progress.
+    reaper-fixed-delay: 300000
+    metrics-fixed-delay: 300000
+    backlog-warning-threshold: 200
+
+excel:
+  sync:
+    # How often to retry tasks that failed to write to Excel.
+    retry-fixed-delay: 30000
+
+litellm:
+  base-url: ${LITELLM_BASE_URL:http://localhost:4001/v1}
+  api-key: ${LITELLM_API_KEY}
+  model: fast-chat
+  task-extraction:
+    # Raised from 1024 to 2048 after finishReason=length truncation was
+    # observed mid-JSON on a real email (see LlmTaskExtractionService,
+    # which now detects and logs this explicitly instead of failing
+    # with an opaque Jackson parse error). If finishReason=length still
+    # appears in the logs at 2048, raise this further.
+    max-tokens: 1000
+    max-body-chars: 16000
+    # Was NOT actually being sent to LiteLLM despite this key
+    # existing here (the extraction request builder had no
+    # reasoning_effort field at all) — task-verification below has
+    # the same key but was equally unwired. Both are now actually
+    # threaded through to the API. If finishReason=length keeps
+    # appearing even with this set, the model/provider is likely
+    # ignoring the setting and emitting reasoning tokens anyway; the
+    # truncated-content preview logged alongside the length warning
+    # will show a <think>...</think>-style preamble if so.
+    reasoning-effort: low
+    connect-timeout-ms: 5000
+    read-timeout-ms: 60000
+  task-verification:
+    # Verification is a per-candidate LLM call sharing the SAME
+    # litellm.rate-limit budget as extraction below (there is one
+    # quota for this whole app, not two), so this is kept as small as
+    # is SAFELY possible — not as small as possible outright. A short
+    # response is all that's needed for a SAME/DIFFERENT/AMBIGUOUS
+    # verdict plus a one-sentence reason.
+    #
+    # History: 200 -> 500 -> 1024. 200 truncated almost immediately.
+    # 500 was still observed truncating in real end-to-end testing
+    # against a live LiteLLM stack (finishReason=length, partial
+    # content cut off after only a few tokens of JSON) — some models
+    # emit meaningful preamble/reasoning tokens despite
+    # reasoning-effort:none and the prompt explicitly forbidding it,
+    # eating into the budget before the actual verdict JSON starts.
+    # NOTE: at the time that was observed, this key was NOT actually
+    # sent to LiteLLM (the request builder had no reasoning_effort
+    # field) — it is now genuinely wired through, so it's possible
+    # truncation gets meaningfully rarer going forward. Still, if
+    # finishReason=length appears in the logs at 1024, raise this
+    # further — TaskSemanticVerificationService logs finishReason
+    # explicitly, so this is diagnosable rather than guessed at. A
+    # truncated response is never treated as SAME or DIFFERENT
+    # regardless of this value; it always resolves to MALFORMED (see
+    # TaskSemanticVerificationService#interpretResponse).
+    max-tokens: 1024
+    reasoning-effort: low
+    connect-timeout-ms: 5000
+    read-timeout-ms: 20000
+  embedding:
+    # Routes through LiteLLM to the embed-cache model (Ollama /
+    # nomic-embed-text locally, per litellm_config.yaml) — used ONLY
+    # as the pre-filter that decides whether a candidate reaches
+    # task-verification above. Does NOT draw from litellm.rate-limit
+    # below: that budget protects scarce, quota-limited EXTERNAL
+    # provider calls, and this is local compute with no such quota.
+    # See EmbeddingSimilarityService's class javadoc.
+    model: embed-cache
+    connect-timeout-ms: 5000
+    read-timeout-ms: 10000
+  rate-limit:
+    # Hard caps to stay within the free-tier quota. A request that
+    # would exceed either cap is never sent to LiteLLM; the email
+    # is left unprocessed and retried on the next sync cycle.
+    #
+    # IMPORTANT: if semantic-duplicate-detection.enabled is turned on
+    # below, verification calls draw from this SAME budget as task
+    # extraction. At the default 50/day, a handful of emails with
+    # multiple tasks each checked against a few candidates can
+    # consume the entire day's quota on verification alone, starving
+    # extraction. Raise these caps (and confirm your LiteLLM plan
+    # supports it) before enabling semantic detection in production.
+    max-requests-per-minute: 20
+    max-requests-per-day: 50
+
+semantic-duplicate-detection:
+  # Turned ON to run ManualSemanticMatchingVerification against real
+  # LiteLLM. Requires litellm.base-url below to point at a REAL,
+  # reachable LiteLLM instance and a valid LITELLM_API_KEY env var —
+  # without both, every verification call will 401 (or fail to
+  # connect) and everything will resolve to AMBIGUOUS, same as the
+  # earlier test run. That's the correct fail-safe behavior, but it
+  # tells you nothing about real SAME/DIFFERENT judgment quality.
+  #
+  # Turn this back to false before any other real usage — this was
+  # not something the 50/day shared LLM budget was sized for (see
+  # the rate-limit comment above).
+  enabled: true
+  # How many of the sender+receiver-scoped active tasks to check a
+  # new extracted task against. Each candidate above the similarity
+  # threshold costs one LLM call (unless an earlier candidate already
+  # resolves to SAME). Kept small since candidates are already scoped
+  # to (sender, receiver), so this rarely needs to be large.
+  max-candidates: 3
+  # Embedding cosine-similarity pre-filter (see
+  # EmbeddingSimilarityService): candidates scoring BELOW this are
+  # skipped without an LLM verification call. Replaces the old
+  # word-overlap (Jaccard) pre-filter, which missed genuine
+  # paraphrases entirely — "confirm shipping address for Denver
+  # warehouse order" vs "verify delivery address for Denver warehouse
+  # shipment" scored only ~0.10 on word overlap despite being the
+  # same task, so it was created as a duplicate without the LLM ever
+  # being consulted.
+  #
+  # 0.75 is a REASONABLE STARTING DEFAULT for nomic-embed-text on
+  # short business-task text, NOT a calibrated value — cosine
+  # similarity and Jaccard live on completely different scales (two
+  # genuinely unrelated short sentences can still score 0.5-0.6+ on
+  # cosine similarity), so this number needs real tuning against your
+  # actual task data. Watch the "Skipping LLM verification below
+  # embedding similarity threshold" log line: if genuine duplicates
+  # are being skipped, lower this; if the LLM is being asked about
+  # obviously-unrelated pairs constantly, raise it. Set to 0 to
+  # disable the pre-filter entirely (every candidate goes to the LLM).
+  #
+  # If the embedding call itself fails (Ollama down, LiteLLM
+  # misroutes it, timeout), the candidate is sent to the LLM verifier
+  # regardless of this threshold — see TaskPersistenceService's
+  # fail-open handling. A failed pre-filter is never treated as
+  # "definitely different".
+  embedding-similarity-threshold: 0.75
+
+user:
+  timezone: UTC
+
+sla:
+  # Business-hour SLA duration for customer-facing emails that
+  # require a response. Centralized here (never hardcoded inside
+  # BusinessHoursSlaCalculator/SlaService) so it can be tuned without
+  # a code change.
+  duration-hours: 24
+  # Defaults to the same timezone already used for user-facing dates
+  # elsewhere in the app (see user.timezone above).
+  timezone: ${user.timezone:UTC}
+  working-days: MON,TUE,WED,THU,FRI
+  working-hours-start: "09:00"
+  working-hours-end: "18:00"
+

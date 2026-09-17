@@ -1,0 +1,118 @@
+services:
+
+  postgres:
+    image: postgres:16
+    container_name: ai-email-assistant-postgres-sla
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aiassistant}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aiassistant}
+      POSTGRES_DB: ${POSTGRES_DB:-aiassistant}
+    ports:
+      - "5434:5432"
+    volumes:
+      - aiassistant_sla_postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-aiassistant} -d ${POSTGRES_DB:-aiassistant}"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+    networks:
+      - merged-sla-network
+
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: ai-email-assistant-litellm-sla
+    restart: unless-stopped
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    env_file:
+      - .env
+
+    environment:
+      DATABASE_URL: ${LITELLM_DATABASE_URL}
+
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+
+    command:
+      - "--config"
+      - "/app/config.yaml"
+
+    ports:
+      - "127.0.0.1:4001:4000"
+
+    networks:
+      - merged-sla-network
+
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-email-assistant-backend-sla
+    restart: unless-stopped
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      litellm:
+        condition: service_started
+
+    env_file:
+      - .env
+
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      LITELLM_BASE_URL: http://litellm:4000/v1
+      LITELLM_TASK_EXTRACTION_REASONING_EFFORT: low
+      APP_FRONTEND_BASE_URL: ${APP_FRONTEND_BASE_URL}
+      APP_BACKEND_BASE_URL: ${APP_BACKEND_BASE_URL}
+
+    ports:
+      - "127.0.0.1:8080:8080"
+
+    networks:
+      - merged-sla-network
+
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ai-email-assistant-frontend-sla
+    restart: unless-stopped
+
+    depends_on:
+      - backend
+
+    ports:
+      - "127.0.0.1:5173:80"
+
+    networks:
+      - merged-sla-network
+
+
+networks:
+
+  merged-sla-network:
+    name: aiassistant-sla-network
+
+
+volumes:
+
+  aiassistant_sla_postgres_data:
+    name: aiassistant_sla_postgres_data
